@@ -1,0 +1,101 @@
+name: Build & publish bundle (jsdelivr)
+
+# Construit le bundle Tampermonkey a chaque tag `vX.Y.Z` et commite `dist/`
+# SUR CE MEME TAG, afin que jsdelivr puisse servir un artefact fige :
+#   https://cdn.jsdelivr.net/gh/<user>/<repo>@vX.Y.Z/dist/tampermonkey-autofill.js
+#
+# Flux d'un release :
+#   1. git tag v1.0.0 && git push origin v1.0.0
+#   2. la CI typecheck + build + verifie le bundle, commite dist/, puis
+#      repositionne le tag sur le commit de build (force).
+#   3. l'URL jsdelivr @v1.0.0 contient desormais dist/.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag a (re)builder, ex. v1.0.0'
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resoudre le tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "name=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout du tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.name }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      # Anti-boucle : si le commit pointe par le tag est deja un commit de
+      # build (dist/ present et a jour), on s'arrete la. Le repush du tag
+      # re-declenche ce workflow ; sans ce garde-fou on bouclerait.
+      - name: Detecter un tag deja construit
+        id: guard
+        run: |
+          if git log -1 --pretty=%s | grep -q '^ci(build):'; then
+            echo "already_built=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "already_built=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node
+        if: steps.guard.outputs.already_built == 'false'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Installer les dependances
+        if: steps.guard.outputs.already_built == 'false'
+        run: npm install
+
+      - name: Typecheck
+        if: steps.guard.outputs.already_built == 'false'
+        run: npm run typecheck
+
+      - name: Build
+        if: steps.guard.outputs.already_built == 'false'
+        run: npm run build
+
+      - name: Verifier le bundle (present et non vide)
+        if: steps.guard.outputs.already_built == 'false'
+        run: |
+          f=dist/tampermonkey-autofill.js
+          test -s "$f" || { echo "::error::$f absent ou vide"; exit 1; }
+          echo "OK: $f ($(wc -c < "$f") octets)"
+
+      - name: Commiter dist/ et repositionner le tag
+        if: steps.guard.outputs.already_built == 'false'
+        env:
+          TAG: ${{ steps.tag.outputs.name }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f dist/
+          if git diff --cached --quiet; then
+            echo "Aucun changement dans dist/, rien a publier."
+            exit 0
+          fi
+          git commit -m "ci(build): dist pour ${TAG}"
+          git tag -f "${TAG}"
+          git push origin "${TAG}" --force
