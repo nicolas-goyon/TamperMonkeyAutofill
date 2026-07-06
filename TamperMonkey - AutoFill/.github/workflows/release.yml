@@ -32,7 +32,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Resoudre le tag
-        working-directory: "TamperMonkey - AutoFill"
         id: tag
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
@@ -52,7 +51,6 @@ jobs:
       # build (dist/ present et a jour), on s'arrete la. Le repush du tag
       # re-declenche ce workflow ; sans ce garde-fou on bouclerait.
       - name: Detecter un tag deja construit
-        working-directory: "TamperMonkey - AutoFill"
         id: guard
         run: |
           if git log -1 --pretty=%s | grep -q '^ci(build):'; then
@@ -68,22 +66,18 @@ jobs:
           node-version: 20
 
       - name: Installer les dependances
-        working-directory: "TamperMonkey - AutoFill"
         if: steps.guard.outputs.already_built == 'false'
         run: npm install
 
       - name: Typecheck
-        working-directory: "TamperMonkey - AutoFill"
         if: steps.guard.outputs.already_built == 'false'
         run: npm run typecheck
 
       - name: Build
-        working-directory: "TamperMonkey - AutoFill"
         if: steps.guard.outputs.already_built == 'false'
         run: npm run build
 
       - name: Verifier le bundle (present et non vide)
-        working-directory: "TamperMonkey - AutoFill"
         if: steps.guard.outputs.already_built == 'false'
         run: |
           f=dist/tampermonkey-autofill.js
@@ -91,7 +85,6 @@ jobs:
           echo "OK: $f ($(wc -c < "$f") octets)"
 
       - name: Commiter dist/ et repositionner le tag
-        working-directory: "TamperMonkey - AutoFill"
         if: steps.guard.outputs.already_built == 'false'
         env:
           TAG: ${{ steps.tag.outputs.name }}
