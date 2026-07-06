@@ -24,6 +24,13 @@ const options = {
   entryPoints: [entry.in],
   outfile: path.join(root, 'dist', `${entry.out}.js`),
   globalName: entry.globalName,
+  // Dans le sandbox Tampermonkey (tout @grant != none), le `var TMAutofill`
+  // top-level du bundle IIFE reste local au wrapper : window.TMAutofill est
+  // undefined. On l'attache explicitement a window pour que
+  // `window.TMAutofill.<Form>.init()` fonctionne partout.
+  footer: {
+    js: `if (typeof window !== 'undefined') { window.${entry.globalName} = ${entry.globalName}; }`,
+  },
 };
 
 async function run() {
