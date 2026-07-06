@@ -4,6 +4,11 @@ name: Build & publish bundle (jsdelivr)
 # SUR CE MEME TAG, afin que jsdelivr puisse servir un artefact fige :
 #   https://cdn.jsdelivr.net/gh/<user>/<repo>@vX.Y.Z/dist/tampermonkey-autofill.js
 #
+# NOTE : le projet Node vit dans le sous-dossier "TamperMonkey - AutoFill/".
+# Ce workflow DOIT rester a la racine du repo (.github/workflows/), sinon
+# GitHub Actions ne le detecte pas. Les commandes projet (npm, build, dist)
+# sont donc executees dans le sous-dossier via `working-directory`.
+#
 # Flux d'un release :
 #   1. git tag v1.0.0 && git push origin v1.0.0
 #   2. la CI typecheck + build + verifie le bundle, commite dist/, puis
@@ -67,18 +72,22 @@ jobs:
 
       - name: Installer les dependances
         if: steps.guard.outputs.already_built == 'false'
+        working-directory: 'TamperMonkey - AutoFill'
         run: npm install
 
       - name: Typecheck
         if: steps.guard.outputs.already_built == 'false'
+        working-directory: 'TamperMonkey - AutoFill'
         run: npm run typecheck
 
       - name: Build
         if: steps.guard.outputs.already_built == 'false'
+        working-directory: 'TamperMonkey - AutoFill'
         run: npm run build
 
       - name: Verifier le bundle (present et non vide)
         if: steps.guard.outputs.already_built == 'false'
+        working-directory: 'TamperMonkey - AutoFill'
         run: |
           f=dist/tampermonkey-autofill.js
           test -s "$f" || { echo "::error::$f absent ou vide"; exit 1; }
@@ -86,6 +95,7 @@ jobs:
 
       - name: Commiter dist/ et repositionner le tag
         if: steps.guard.outputs.already_built == 'false'
+        working-directory: 'TamperMonkey - AutoFill'
         env:
           TAG: ${{ steps.tag.outputs.name }}
         run: |
