@@ -983,4 +983,5 @@ var TMAutofill = (() => {
   var run = fillAll;
   return __toCommonJS(src_exports);
 })();
+if (typeof window !== 'undefined') { window.TMAutofill = TMAutofill; }
 //# sourceMappingURL=tampermonkey-autofill.js.map
