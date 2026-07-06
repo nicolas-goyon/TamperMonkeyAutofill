@@ -42,7 +42,6 @@ jobs:
           fi
 
       - name: Checkout du tag
-        working-directory: "./TamperMonkey - AutoFill"
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.tag.outputs.name }}
@@ -63,7 +62,6 @@ jobs:
           fi
 
       - name: Setup Node
-        working-directory: "./TamperMonkey - AutoFill"
         if: steps.guard.outputs.already_built == 'false'
         uses: actions/setup-node@v4
         with:
