@@ -5,8 +5,8 @@
  * les experiences et les formations sont fournis par l'appelant (le script
  * Tampermonkey local de chaque utilisateur) via SmartRecruiters.init(config).
  *
- * Bundle esbuild -> dist/smartrecruiters.js, expose sur
- * window.TMAutofillSmartrecruiters (voir scripts/build.mjs).
+ * Inclus dans le bundle esbuild dist/tampermonkey-autofill.js, expose sur
+ * window.TMAutofill.SmartRecruiters (voir scripts/build.mjs).
  */
 export * from './types';
 

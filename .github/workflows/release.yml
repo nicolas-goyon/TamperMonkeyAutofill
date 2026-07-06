@@ -72,22 +72,18 @@ jobs:
 
       - name: Installer les dependances
         if: steps.guard.outputs.already_built == 'false'
-        working-directory: 'TamperMonkey - AutoFill'
         run: npm install
 
       - name: Typecheck
         if: steps.guard.outputs.already_built == 'false'
-        working-directory: 'TamperMonkey - AutoFill'
         run: npm run typecheck
 
       - name: Build
         if: steps.guard.outputs.already_built == 'false'
-        working-directory: 'TamperMonkey - AutoFill'
         run: npm run build
 
       - name: Verifier le bundle (present et non vide)
         if: steps.guard.outputs.already_built == 'false'
-        working-directory: 'TamperMonkey - AutoFill'
         run: |
           f=dist/tampermonkey-autofill.js
           test -s "$f" || { echo "::error::$f absent ou vide"; exit 1; }
@@ -95,7 +91,6 @@ jobs:
 
       - name: Commiter dist/ et repositionner le tag
         if: steps.guard.outputs.already_built == 'false'
-        working-directory: 'TamperMonkey - AutoFill'
         env:
           TAG: ${{ steps.tag.outputs.name }}
         run: |

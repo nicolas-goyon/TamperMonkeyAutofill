@@ -2,7 +2,7 @@
   "name": "tampermonkey-autofill",
   "version": "0.1.0",
   "private": true,
-  "description": "Bibliotheque TypeScript pour preremplir des formulaires de candidature (SmartRecruiters, etc.) via Tampermonkey. Ne contient aucune donnee personnelle : le profil est fourni par le script Tampermonkey local de l'utilisateur.",
+  "description": "TypeScript library that pre-fills job application forms (SmartRecruiters, ...) via Tampermonkey. Contains no personal data: the profile is supplied by the user's local Tampermonkey userscript.",
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
