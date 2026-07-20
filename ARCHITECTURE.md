@@ -56,7 +56,7 @@ src/
       index.ts               Public entry point: init(config) / run(config)
 ```
 
-Currently a single platform exists: `src/forms/smartrecruiters/`. It covers the whole SmartRecruiters "oneclick-ui" flow (used by many companies: Sopra Steria, ALTEN, Devoteam, …), not one specific company — the list of targeted companies lives in the `@match` rules of the user's local userscript, not in this repository.
+Each platform under `src/forms/` covers one recruiting ATS (SmartRecruiters, SAP SuccessFactors, Cegid Talentsoft, …), not one specific company — the list of targeted companies lives in the `@match` rules of the user's local userscript, not in this repository.
 
 ### Why `utils/` and `fill/` are separate
 

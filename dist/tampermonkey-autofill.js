@@ -21,7 +21,9 @@ var TMAutofill = (() => {
   // src/index.ts
   var src_exports = {};
   __export(src_exports, {
-    SmartRecruiters: () => smartrecruiters_exports
+    SmartRecruiters: () => smartrecruiters_exports,
+    SuccessFactors: () => successfactors_exports,
+    Talentsoft: () => talentsoft_exports
   });
 
   // src/forms/smartrecruiters/index.ts
@@ -34,7 +36,7 @@ var TMAutofill = (() => {
   // src/shared/ui/notify.ts
   function createNotifier(options = {}) {
     const id = options.id ?? "tm-autofill-status";
-    return function notify2(message) {
+    return function notify4(message) {
       let box = document.getElementById(id);
       if (!box) {
         box = document.createElement("div");
@@ -172,7 +174,7 @@ var TMAutofill = (() => {
     }
     return result;
   }
-  var norm = (value) => stripDiacritics(String(value ?? "").normalize("NFD")).replace(/\s+/g, " ").trim().toLowerCase();
+  var norm = (value) => stripDiacritics(String(value ?? "").normalize("NFD")).replace(/[‘’ʼ]/g, "'").replace(/\s+/g, " ").trim().toLowerCase();
   var TEXT_ATTRIBUTES = ["label", "aria-label", "placeholder", "value", "data-test", "id"];
   function textOf(el) {
     if (!el) return "";
@@ -822,6 +824,20 @@ var TMAutofill = (() => {
   }
 
   // src/forms/smartrecruiters/utils/date.ts
+  function getFlatpickrInstance(input) {
+    const fp = input?._flatpickr;
+    return fp && typeof fp.setDate === "function" ? fp : null;
+  }
+  function parseMonthYear(value) {
+    const parts = value.trim().split(/[/\-.]/).map((part) => part.trim()).filter(Boolean);
+    if (parts.length < 2) return null;
+    const [monthStr, yearStr] = parts.length >= 3 ? [parts[1], parts[2]] : [parts[0], parts[1]];
+    const month = Number.parseInt(monthStr, 10);
+    const year = Number.parseInt(yearStr, 10);
+    if (!Number.isInteger(month) || !Number.isInteger(year)) return null;
+    if (month < 1 || month > 12) return null;
+    return new Date(year, month - 1, 1);
+  }
   async function setDateScoped(root, dataTest, value) {
     if (!value) return false;
     const wrapper = scopedDataTest(root, dataTest);
@@ -836,6 +852,20 @@ var TMAutofill = (() => {
       } catch {
       }
       await sleep(80);
+      const fp = getFlatpickrInstance(nativeInput);
+      const parsedDate = parseMonthYear(value);
+      if (fp && parsedDate) {
+        fp.setDate(parsedDate, true);
+        await sleep(80);
+        try {
+          nativeInput.blur();
+        } catch {
+        }
+        dispatchAll(nativeInput);
+        dispatchAll(dateField);
+        dispatchAll(wrapper);
+        return true;
+      }
       nativeSetValue(nativeInput, "");
       await sleep(50);
       nativeSetValue(nativeInput, value);
@@ -981,6 +1011,1065 @@ var TMAutofill = (() => {
     installSmartRecruitersButton(config);
   }
   var run = fillAll;
+
+  // src/forms/successfactors/index.ts
+  var successfactors_exports = {};
+  __export(successfactors_exports, {
+    init: () => init2,
+    run: () => run2
+  });
+
+  // src/forms/successfactors/utils/labels.ts
+  var SECTION_LABELS = {
+    profile: ["profile information", "informations du profil", "informations personnelles"],
+    employment: ["employment history", "historique professionnel", "historique d'emploi", "experience professionnelle"],
+    education: ["education", "formation"],
+    languages: ["language skills", "competences linguistiques", "langues"]
+  };
+  var FIELD_LABELS = {
+    firstName: ["first name", "prenom"],
+    lastName: ["last name", "nom"],
+    email: ["email", "e-mail", "courriel"],
+    phone: ["phone", "telephone"],
+    address1: ["address 1", "adresse 1"],
+    address2: ["address 2", "adresse 2"],
+    city: ["city", "ville"],
+    stateProvince: ["state / province", "etat / province", "region"],
+    zip: ["zip code", "code postal"],
+    employer: ["employer name", "nom de l'employeur", "employeur"],
+    jobTitle: ["job title", "intitule du poste", "titre du poste"],
+    schoolOther: ["if other, please specify", "si autre, veuillez preciser"]
+  };
+  var COMBO_TITLES = {
+    gender: ["gender", "genre", "sexe"],
+    civility: ["title", "civilite"],
+    country: ["country", "pays"],
+    nationality: ["nationality", "nationalite"],
+    preferredContact: ["preferred way of contact", "moyen de contact prefere"],
+    industry: ["industry", "secteur"],
+    school: ["school / college / university", "ecole / universite", "etablissement"],
+    highestLevel: ["highest level of education", "niveau d'etudes le plus eleve", "niveau de formation"],
+    yearOfDegree: ["year of degree", "annee d'obtention", "annee du diplome"],
+    areaOfStudy: ["area of study", "domaine d'etudes", "domaine d etude"],
+    language: ["language", "langue"],
+    proficiency: ["proficiency", "niveau de maitrise", "maitrise"],
+    howDidYouHear: ["how did you hear about this position", "comment avez-vous entendu parler de ce poste"]
+  };
+  var DATE_TITLES = {
+    from: ["from", "du", "de"],
+    to: ["to", "au", "a"],
+    dateOfDegree: ["date of highest level of education", "date du niveau d'etudes le plus eleve", "date du diplome"]
+  };
+  function matchesLabel(text, synonyms) {
+    const t = norm(text);
+    if (!t) return false;
+    return synonyms.some((syn) => t === norm(syn) || t.includes(norm(syn)));
+  }
+  function equalsLabel(text, synonyms) {
+    const t = norm(text);
+    if (!t) return false;
+    return synonyms.some((syn) => t === norm(syn));
+  }
+
+  // src/forms/successfactors/utils/sections.ts
+  function sectionTopBars() {
+    return [...document.querySelectorAll(".rcmFormSectionTopBar")];
+  }
+  function isInRange(el, range) {
+    if (el === range.start) return true;
+    const afterStart = Boolean(
+      range.start.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING
+    );
+    if (!afterStart) return false;
+    if (!range.end) return true;
+    return Boolean(el.compareDocumentPosition(range.end) & Node.DOCUMENT_POSITION_FOLLOWING);
+  }
+  function findSection(synonyms) {
+    const bars = sectionTopBars();
+    for (let i = 0; i < bars.length; i++) {
+      if (matchesLabel(bars[i].textContent, synonyms)) {
+        return { start: bars[i], end: bars[i + 1] ?? null };
+      }
+    }
+    console.warn("[Autofill] Section introuvable :", synonyms[0]);
+    return null;
+  }
+  function elementsInRange(elements, range) {
+    return elements.filter((el) => isInRange(el, range)).sort(
+      (a, b) => a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1
+    );
+  }
+  function splitIntoBlocks(anchors, section) {
+    const sorted = elementsInRange(anchors, section);
+    return sorted.map((anchor, i) => ({
+      start: anchor,
+      end: sorted[i + 1] ?? section.end
+    }));
+  }
+
+  // src/forms/successfactors/utils/fields.ts
+  function allFieldLabels() {
+    return [...document.querySelectorAll("label.rcmFormFieldLabel")];
+  }
+  function findLabels(synonyms, range) {
+    const matching = allFieldLabels().filter((label) => matchesLabel(label.textContent, synonyms));
+    if (!range) return matching;
+    return elementsInRange(matching, range);
+  }
+  function targetOfLabel(label) {
+    const forId = label?.getAttribute("for");
+    if (!forId) return null;
+    return document.getElementById(forId);
+  }
+  function findFieldTarget(synonyms, range) {
+    return targetOfLabel(findLabels(synonyms, range)[0] ?? null);
+  }
+  async function setTextField(synonyms, value, range) {
+    if (value === void 0) return true;
+    const target = findFieldTarget(synonyms, range);
+    if (!(target instanceof HTMLInputElement)) {
+      console.warn("[Autofill] Champ texte introuvable :", synonyms[0]);
+      return false;
+    }
+    const ok = nativeSetValue(target, value);
+    console.log(`[Autofill] ${synonyms[0]} ->`, ok ? "OK" : "echec");
+    return ok;
+  }
+
+  // src/forms/successfactors/utils/paginatedSelect.ts
+  var OPTION_SELECTOR2 = '[role="option"], li, [class*="option" i]';
+  function comboInput(target) {
+    if (target instanceof HTMLInputElement) return target;
+    return null;
+  }
+  function findComboByTitle(synonyms, range) {
+    const combos = [
+      ...document.querySelectorAll("input.rcmpaginatedselectinput")
+    ].filter(
+      (el) => matchesLabel(el.getAttribute("title"), synonyms) || matchesLabel(el.getAttribute("aria-label"), synonyms)
+    );
+    if (!range) return combos[0] ?? null;
+    return elementsInRange(combos, range)[0] ?? null;
+  }
+  function visibleOptions(container) {
+    return [...container.querySelectorAll(OPTION_SELECTOR2)].filter((el) => {
+      const rect = el.getBoundingClientRect?.();
+      return (!rect || rect.width > 0 || rect.height > 0) && norm(el.textContent);
+    });
+  }
+  async function waitForOptions(input, timeoutMs = 4e3) {
+    const ownsId = input.getAttribute("aria-owns");
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const container = ownsId ? document.getElementById(ownsId) : null;
+      if (container) {
+        const options = visibleOptions(container);
+        if (options.length > 0) return options;
+      }
+      for (const anyList of document.querySelectorAll('[id$="_listSelect"]')) {
+        const options = visibleOptions(anyList);
+        if (options.length > 0) return options;
+      }
+      await sleep(150);
+    }
+    return [];
+  }
+  function scoreOption(option, expected) {
+    const text = norm(option.textContent);
+    const wanted = norm(expected);
+    if (!text) return -1;
+    if (text === wanted) return 100;
+    if (text.includes(wanted)) return 90;
+    if (wanted.includes(text)) return 70;
+    const words = wanted.split(" ").filter((w) => w.length >= 3);
+    return words.filter((w) => text.includes(w)).length;
+  }
+  async function waitForComboEnabled(input, timeoutMs = 5e3) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      if (!input.disabled && input.getAttribute("disabled") === null) return true;
+      await sleep(200);
+    }
+    return false;
+  }
+  async function setPaginatedSelect(input, value) {
+    if (!input) return false;
+    await waitForComboEnabled(input, 2e3);
+    try {
+      input.scrollIntoView({ block: "center", inline: "nearest" });
+    } catch {
+    }
+    await clickElement(input);
+    try {
+      input.focus();
+    } catch {
+    }
+    await sleep(200);
+    nativeSetValue(input, value);
+    await sleep(500);
+    let options = await waitForOptions(input);
+    if (options.length === 0) {
+      nativeSetValue(input, "");
+      await sleep(400);
+      options = await waitForOptions(input);
+    }
+    if (options.length === 0) {
+      console.warn("[Autofill] Aucune option pour le combo :", value);
+      keyboard(input, "ArrowDown");
+      await sleep(150);
+      keyboard(input, "Enter");
+      await sleep(150);
+      return false;
+    }
+    const ranked = options.map((option) => ({ option, score: scoreOption(option, value) })).sort((a, b) => b.score - a.score);
+    const best = ranked[0];
+    if (!best || best.score <= 0) {
+      console.warn("[Autofill] Aucune option ne matche :", value);
+      return false;
+    }
+    await clickElement(best.option);
+    await sleep(250);
+    dispatchAll(input);
+    try {
+      input.blur();
+    } catch {
+    }
+    console.log("[Autofill] Combo ->", value, ":", norm(best.option.textContent).slice(0, 80));
+    return true;
+  }
+  async function setComboByLabel(synonyms, value, range) {
+    if (value === void 0) return true;
+    const input = comboInput(findFieldTarget(synonyms, range)) ?? findComboByTitle(synonyms, range);
+    if (!input) {
+      console.warn("[Autofill] Combo introuvable :", synonyms[0]);
+      return false;
+    }
+    return setPaginatedSelect(input, value);
+  }
+
+  // src/forms/successfactors/fill/fillProfile.ts
+  async function fillProfile(profile) {
+    const section = findSection(SECTION_LABELS.profile);
+    await setTextField(FIELD_LABELS.firstName, profile.firstName, section);
+    await setTextField(FIELD_LABELS.lastName, profile.lastName, section);
+    await setTextField(FIELD_LABELS.email, profile.email, section);
+    await setTextField(FIELD_LABELS.phone, profile.phone, section);
+    await setTextField(FIELD_LABELS.address1, profile.address1, section);
+    await setTextField(FIELD_LABELS.address2, profile.address2, section);
+    await setTextField(FIELD_LABELS.city, profile.city, section);
+    await setTextField(FIELD_LABELS.stateProvince, profile.stateProvince, section);
+    await setTextField(FIELD_LABELS.zip, profile.zip, section);
+    await setComboByLabel(COMBO_TITLES.gender, profile.gender, section);
+    await sleep(200);
+    await setComboByLabel(COMBO_TITLES.civility, profile.title, section);
+    await sleep(200);
+    await setComboByLabel(COMBO_TITLES.country, profile.country, section);
+    await sleep(200);
+    await setComboByLabel(COMBO_TITLES.nationality, profile.nationality, section);
+    await sleep(200);
+    await setComboByLabel(COMBO_TITLES.preferredContact, profile.preferredContact, section);
+  }
+
+  // src/forms/successfactors/utils/datePicker.ts
+  var DATE_WIDGET_SELECTOR = '[data-testid="datePicker"], ui5-date-picker-xweb-calendar-widget';
+  function findDatePicker(synonyms, range) {
+    const widgets = [...document.querySelectorAll(DATE_WIDGET_SELECTOR)].filter(
+      (el) => equalsLabel(el.getAttribute("title"), synonyms) || equalsLabel(el.getAttribute("accessible-name"), synonyms) || matchesLabel(el.getAttribute("title"), synonyms)
+    );
+    if (!range) return widgets[0] ?? null;
+    return elementsInRange(widgets, range)[0] ?? null;
+  }
+  async function setDatePicker(synonyms, value, range) {
+    if (value === void 0) return true;
+    const widget = findDatePicker(synonyms, range);
+    if (!widget) {
+      console.warn("[Autofill] Date picker introuvable :", synonyms[0]);
+      return false;
+    }
+    try {
+      widget.scrollIntoView({ block: "center", inline: "nearest" });
+    } catch {
+    }
+    const inner = deepQuery("input.ui5-input-inner, input[inner-input]", widget);
+    if (inner instanceof HTMLInputElement) {
+      try {
+        inner.focus();
+      } catch {
+      }
+      await sleep(80);
+      nativeSetValue(inner, value);
+      keyboard(inner, "Enter");
+      await sleep(120);
+      try {
+        inner.blur();
+      } catch {
+      }
+      dispatchAll(widget);
+      console.log(`[Autofill] Date ${synonyms[0]} ->`, value);
+      return true;
+    }
+    try {
+      widget.value = value;
+      widget.setAttribute("value", value);
+      dispatchAll(widget);
+      console.log(`[Autofill] Date ${synonyms[0]} (fallback attribut) ->`, value);
+      return true;
+    } catch {
+      console.warn("[Autofill] Impossible de poser la date :", synonyms[0]);
+      return false;
+    }
+  }
+
+  // src/forms/successfactors/fill/fillExperience.ts
+  async function fillExperienceBlock(entry, block) {
+    await setTextField(FIELD_LABELS.employer, entry.employer, block);
+    await setTextField(FIELD_LABELS.jobTitle, entry.jobTitle, block);
+    await setDatePicker(DATE_TITLES.from, entry.dateFrom, block);
+    await setDatePicker(DATE_TITLES.to, entry.dateTo, block);
+    await setComboByLabel(COMBO_TITLES.industry, entry.industry, block);
+    await sleep(200);
+    await setComboByLabel(COMBO_TITLES.country, entry.country, block);
+  }
+  async function fillExperiences(entries) {
+    if (!entries?.length) return 0;
+    const section = findSection(SECTION_LABELS.employment);
+    if (!section) return 0;
+    const anchors = findLabels(FIELD_LABELS.employer, section);
+    const blocks = splitIntoBlocks(anchors, section);
+    const count = Math.min(entries.length, blocks.length);
+    if (entries.length > blocks.length) {
+      console.warn(
+        `[Autofill] ${entries.length} experiences fournies mais ${blocks.length} blocs affiches. Ajoute des blocs manuellement puis relance.`
+      );
+    }
+    for (let i = 0; i < count; i++) {
+      await fillExperienceBlock(entries[i], blocks[i]);
+      await sleep(300);
+    }
+    return count;
+  }
+
+  // src/forms/successfactors/fill/fillEducation.ts
+  async function fillEducationBlock(entry, block) {
+    await setComboByLabel(COMBO_TITLES.country, entry.country, block);
+    await sleep(400);
+    if (entry.school !== void 0) {
+      const school = findComboByTitle(COMBO_TITLES.school, block);
+      if (school) await waitForComboEnabled(school);
+      await setComboByLabel(COMBO_TITLES.school, entry.school, block);
+      await sleep(200);
+    }
+    await setTextField(FIELD_LABELS.schoolOther, entry.schoolOther, block);
+    await setComboByLabel(COMBO_TITLES.highestLevel, entry.highestLevel, block);
+    await sleep(200);
+    await setComboByLabel(COMBO_TITLES.yearOfDegree, entry.yearOfDegree, block);
+    await sleep(200);
+    await setDatePicker(DATE_TITLES.dateOfDegree, entry.dateOfDegree, block);
+    await setComboByLabel(COMBO_TITLES.areaOfStudy, entry.areaOfStudy, block);
+  }
+  async function fillEducations(entries) {
+    if (!entries?.length) return 0;
+    const section = findSection(SECTION_LABELS.education);
+    if (!section) return 0;
+    const anchors = findLabels(COMBO_TITLES.country, section);
+    const blocks = splitIntoBlocks(anchors, section);
+    const count = Math.min(entries.length, blocks.length);
+    if (entries.length > blocks.length) {
+      console.warn(
+        `[Autofill] ${entries.length} formations fournies mais ${blocks.length} blocs affiches. Ajoute des blocs manuellement puis relance.`
+      );
+    }
+    for (let i = 0; i < count; i++) {
+      await fillEducationBlock(entries[i], blocks[i]);
+      await sleep(300);
+    }
+    return count;
+  }
+
+  // src/forms/successfactors/fill/fillLanguages.ts
+  async function fillLanguages(entries) {
+    if (!entries?.length) return 0;
+    const section = findSection(SECTION_LABELS.languages);
+    if (!section) return 0;
+    const anchors = findLabels(COMBO_TITLES.language, section);
+    const blocks = splitIntoBlocks(anchors, section);
+    const count = Math.min(entries.length, blocks.length);
+    if (entries.length > blocks.length) {
+      console.warn(
+        `[Autofill] ${entries.length} langues fournies mais ${blocks.length} blocs affiches.`
+      );
+    }
+    for (let i = 0; i < count; i++) {
+      await setComboByLabel(COMBO_TITLES.language, entries[i].language, blocks[i]);
+      await sleep(200);
+      await setComboByLabel(COMBO_TITLES.proficiency, entries[i].proficiency, blocks[i]);
+      await sleep(200);
+    }
+    return count;
+  }
+
+  // src/forms/successfactors/fill/fillMisc.ts
+  async function fillMisc(config) {
+    if (config.howDidYouHear === void 0) return;
+    await setComboByLabel(COMBO_TITLES.howDidYouHear, config.howDidYouHear);
+    await sleep(800);
+    if (config.howDidYouHearDetail === void 0) return;
+    const first = findFieldTarget(COMBO_TITLES.howDidYouHear) ?? findComboByTitle(COMBO_TITLES.howDidYouHear);
+    const cascade = first?.closest(".sfCascadingPicklist") ?? first?.closest("span");
+    if (!cascade) {
+      console.warn("[Autofill] Conteneur du picklist en cascade introuvable.");
+      return;
+    }
+    const detail = [
+      ...cascade.querySelectorAll("input.rcmpaginatedselectinput")
+    ].find((el) => el !== first && !el.value);
+    if (!detail) {
+      console.warn("[Autofill] Second combo de detail introuvable (pas encore affiche ?).");
+      return;
+    }
+    await setPaginatedSelect(detail, config.howDidYouHearDetail);
+  }
+
+  // src/forms/successfactors/fill/fillAll.ts
+  var notify2 = createNotifier({ id: "sf-autofill-status" });
+  function countMissingRequired() {
+    let missing = 0;
+    for (const input of document.querySelectorAll(
+      'input[data-testid="sfTextField"][aria-required="true"]'
+    )) {
+      if (!input.value.trim()) missing++;
+    }
+    for (const combo of document.querySelectorAll(
+      'input.rcmpaginatedselectinput[aria-required="true"]'
+    )) {
+      if (!combo.value.trim() && !combo.getAttribute("title")?.trim()) missing++;
+    }
+    return missing;
+  }
+  async function fillAll2(config) {
+    notify2("Preremplissage en cours...");
+    await fillProfile(config.profile);
+    await sleep(500);
+    const nbExp = await fillExperiences(config.experiences);
+    await sleep(500);
+    const nbEdu = await fillEducations(config.educations);
+    await sleep(500);
+    const nbLang = await fillLanguages(config.languages);
+    await sleep(500);
+    await fillMisc(config);
+    await sleep(300);
+    const missing = countMissingRequired();
+    notify2(
+      `Preremplissage termine (${nbExp} exp., ${nbEdu} form., ${nbLang} langues). Champs obligatoires encore vides : ${missing}. Verifie tout avant d'envoyer \u2014 rien n'est soumis automatiquement.`
+    );
+  }
+
+  // src/forms/successfactors/ui.ts
+  var BUTTON_ID2 = "sf-autofill-button";
+  function installSuccessFactorsButton(config) {
+    const install = () => installAutofillButton({
+      id: BUTTON_ID2,
+      label: config.buttonLabel ?? "Remplir candidature",
+      onClick: () => fillAll2(config)
+    });
+    install();
+    observeAndReinstallButton(install);
+    notify2("Bouton Tampermonkey pret. Clique sur \xAB Remplir candidature \xBB, puis verifie avant d'envoyer.");
+  }
+
+  // src/forms/successfactors/index.ts
+  function init2(config) {
+    installSuccessFactorsButton(config);
+  }
+  var run2 = fillAll2;
+
+  // src/forms/talentsoft/index.ts
+  var talentsoft_exports = {};
+  __export(talentsoft_exports, {
+    init: () => init3,
+    run: () => run3
+  });
+
+  // src/forms/talentsoft/utils/labels.ts
+  var SECTION_LABELS2 = {
+    personal: ["informations personnelles", "personal information"],
+    files: ["ajouter des fichiers", "documents", "files"],
+    professionalBackground: ["parcours professionnel", "professional background", "experience professionnelle"],
+    // NB: pas de synonyme "formation" seul : c'est une sous-chaine de
+    // "informations personnelles", ce qui ferait matcher la mauvaise Section.
+    academicBackground: ["parcours academique", "formation academique", "cursus scolaire", "education", "academic background"],
+    languages: ["langues", "languages"],
+    contact: ["langue preferee pour les futurs contacts", "preferred contact language"]
+  };
+  var FIELD_LABELS2 = {
+    firstName: ["prenom", "first name"],
+    lastName: ["nom de famille", "last name"],
+    email: ["e-mail", "email", "courriel"],
+    gender: ["sexe", "genre", "gender"],
+    addressCountry: ["pays"],
+    disability: ["j'ai un handicap", "handicap", "disability"],
+    yearsOfExperience: ["annees d'experience", "years of experience"],
+    internationalExperience: ["experience internationale", "international experience"],
+    internationalExperienceCountries: [
+      "avez-vous une experience professionnelle internationale",
+      "countries with international"
+    ],
+    cv: ["ajouter un cv", "cv", "resume"],
+    coverLetter: ["lettre de motivation", "cover letter"],
+    otherFiles: ["autres fichiers", "other files"],
+    employer: ["societe employeur", "employer"],
+    jobTitle: ["intitule du poste", "job title"],
+    dateFrom: ["date de debut", "start date"],
+    dateTo: ["date de fin", "end date"],
+    responsibilities: ["responsabilites", "responsibilities"],
+    experienceDataset: ["experience professionnelle"],
+    schoolName: ["nom de l'ecole", "school name"],
+    graduationDate: ["annee du diplome", "year of degree", "graduation"],
+    fieldOfStudy: ["domaine principal d'etude", "field of study"],
+    educationLevel: ["niveau d'etudes", "level of education"],
+    averageGrade: ["moyenne scolaire", "average grade", "gpa"],
+    skillsDataset: ["liste des competences", "list of skills"],
+    skillLevel: ["niveau de maitrise", "proficiency"],
+    languageLevel: ["niveau linguistique", "language level"],
+    preferredContactLanguage: ["langue preferee pour les futurs contacts", "preferred contact language"],
+    howDidYouHear: ["comment avez-vous entendu parler", "how did you hear"],
+    howDidYouHearOther: ["autre (merci de preciser)", "other, please specify"],
+    acceptPrivacyPolicy: ["j'accepte", "i accept", "politique de confidentialite", "privacy policy"]
+  };
+  function matchesLabel2(text, synonyms) {
+    const t = norm(text);
+    if (!t) return false;
+    return synonyms.some((syn) => t === norm(syn) || t.includes(norm(syn)));
+  }
+
+  // src/forms/talentsoft/utils/containers.ts
+  function findSection2(synonyms, root = document) {
+    const sections = [...root.querySelectorAll("fieldset.Section")];
+    for (const section of sections) {
+      const legend = section.querySelector("legend.tc_formTitle");
+      if (legend && matchesLabel2(legend.textContent, synonyms)) return section;
+    }
+    console.warn("[Autofill] Section introuvable :", synonyms[0]);
+    return null;
+  }
+  function findDatasetFieldId(synonyms, scope = document) {
+    const addLinks = [...scope.querySelectorAll('a[id^="addRowFor_"]')];
+    for (const link of addLinks) {
+      const fieldId = link.id.replace("addRowFor_", "");
+      if (!fieldId) continue;
+      const ownLabel = document.getElementById(`${fieldId}-label`);
+      if (ownLabel && matchesLabel2(ownLabel.textContent, synonyms)) return fieldId;
+      const section = link.closest("fieldset.Section");
+      const legend = section?.querySelector("legend.tc_formTitle");
+      if (legend && matchesLabel2(legend.textContent, synonyms)) return fieldId;
+    }
+    console.warn("[Autofill] Bloc repetable introuvable :", synonyms[0]);
+    return null;
+  }
+
+  // src/forms/talentsoft/utils/fields.ts
+  function fieldLabels(container) {
+    return [...container.querySelectorAll("label.WizardFieldLabel[for]")];
+  }
+  function findLabel(synonyms, container = document) {
+    return fieldLabels(container).find((label) => matchesLabel2(label.textContent, synonyms)) ?? null;
+  }
+  function findFieldTarget2(synonyms, container = document) {
+    const forId = findLabel(synonyms, container)?.getAttribute("for");
+    if (!forId) return null;
+    return document.getElementById(forId);
+  }
+  async function setTextField2(synonyms, value, container = document) {
+    if (value === void 0) return true;
+    const target = findFieldTarget2(synonyms, container);
+    if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) {
+      console.warn("[Autofill] Champ texte introuvable :", synonyms[0]);
+      return false;
+    }
+    const ok = nativeSetValue(target, value);
+    console.log(`[Autofill] ${synonyms[0]} ->`, ok ? "OK" : "echec");
+    return ok;
+  }
+  var ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+  async function setDateField(synonyms, isoDate, container = document) {
+    if (isoDate === void 0) return true;
+    if (!ISO_DATE.test(isoDate)) {
+      console.warn(
+        `[Autofill] Date "${synonyms[0]}" ignoree : format attendu 'YYYY-MM-DD', recu`,
+        isoDate
+      );
+      return false;
+    }
+    const target = findFieldTarget2(synonyms, container);
+    if (!(target instanceof HTMLInputElement)) {
+      console.warn("[Autofill] Champ date introuvable :", synonyms[0]);
+      return false;
+    }
+    const ok = nativeSetValue(target, isoDate);
+    console.log(`[Autofill] Date ${synonyms[0]} ->`, ok ? isoDate : "echec");
+    return ok;
+  }
+
+  // src/forms/talentsoft/utils/radio.ts
+  function radioGroupLegends(container) {
+    return [...container.querySelectorAll("legend.WizardFieldLabel[id]")];
+  }
+  async function setRadioGroupByLabel(synonyms, optionLabel, container = document) {
+    if (optionLabel === void 0) return true;
+    const legend = radioGroupLegends(container).find((el) => matchesLabel2(el.textContent, synonyms));
+    const groupId = legend?.id.replace(/-label$/, "");
+    const group = groupId ? document.getElementById(groupId) : null;
+    if (!group) {
+      console.warn("[Autofill] Groupe de radio introuvable :", synonyms[0]);
+      return false;
+    }
+    const radios = [...group.querySelectorAll('input[type="radio"]')];
+    const wanted = norm(optionLabel);
+    const target = radios.find((radio) => {
+      const optionName = norm(radio.getAttribute("data-option-name"));
+      const label = document.querySelector(`label[for="${radio.id}"]`);
+      return optionName === wanted || norm(label?.textContent) === wanted || optionName.includes(wanted);
+    });
+    if (!target) {
+      console.warn("[Autofill] Option de radio introuvable :", optionLabel);
+      return false;
+    }
+    await clickElement(target);
+    target.checked = true;
+    console.log(`[Autofill] ${synonyms[0]} ->`, optionLabel);
+    return true;
+  }
+
+  // src/forms/talentsoft/utils/select.ts
+  function bestOption(select, value) {
+    const wanted = norm(value);
+    let best = null;
+    for (const option of [...select.options]) {
+      const text = norm(option.textContent);
+      if (!text) continue;
+      let score = -1;
+      if (text === wanted) score = 100;
+      else if (text.includes(wanted)) score = 90;
+      else if (wanted.includes(text)) score = 70;
+      if (score > (best?.score ?? -1)) best = { option, score };
+    }
+    return best && best.score > 0 ? best.option : null;
+  }
+  function setNativeSelectValue(select, value) {
+    if (!select) return false;
+    const option = bestOption(select, value);
+    if (!option) {
+      console.warn("[Autofill] Aucune option ne matche :", value);
+      return false;
+    }
+    select.value = option.value;
+    dispatchAll(select);
+    return true;
+  }
+  async function setNativeSelectByLabel(synonyms, value, container = document) {
+    if (value === void 0) return true;
+    const target = findFieldTarget2(synonyms, container);
+    if (!(target instanceof HTMLSelectElement)) {
+      console.warn("[Autofill] Select introuvable :", synonyms[0]);
+      return false;
+    }
+    const ok = setNativeSelectValue(target, value);
+    console.log(`[Autofill] ${synonyms[0]} ->`, ok ? value : "echec");
+    return ok;
+  }
+
+  // src/forms/talentsoft/utils/select2.ts
+  var RESULT_SELECTOR = '.select2-results__option[role="option"], li.select2-results__option';
+  function isUsableResult(el) {
+    if (el.getAttribute("aria-disabled") === "true") return false;
+    if (el.classList.contains("select2-results__message")) return false;
+    if (el.classList.contains("loading-results")) return false;
+    return norm(el.textContent).length > 0;
+  }
+  function visibleResultOptions() {
+    return [...document.querySelectorAll(RESULT_SELECTOR)].filter(isUsableResult);
+  }
+  function selectionBox(fieldId) {
+    return document.querySelector(`.select2Container${fieldId}`);
+  }
+  async function openSelect2(fieldId) {
+    const box = selectionBox(fieldId);
+    if (!box) return null;
+    await clickElement(box);
+    await sleep(200);
+    return box;
+  }
+  function searchField(fieldId) {
+    const inline = document.getElementById(`${fieldId}-search__field`);
+    if (inline instanceof HTMLInputElement) return inline;
+    const open = document.querySelector(
+      ".select2-container--open .select2-search__field, .select2-dropdown .select2-search__field"
+    );
+    return open ?? null;
+  }
+  async function waitForResults(timeoutMs = 6e3) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const options = visibleResultOptions();
+      if (options.length > 0) return options;
+      await sleep(200);
+    }
+    return [];
+  }
+  function scoreOption2(option, expected) {
+    const text = norm(option.textContent);
+    const wanted = norm(expected);
+    if (!text) return -1;
+    if (text === wanted) return 100;
+    if (text.includes(wanted)) return 90;
+    if (wanted.includes(text)) return 70;
+    const words = wanted.split(" ").filter((w) => w.length >= 3);
+    return words.filter((w) => text.includes(w)).length;
+  }
+  async function setSelect2Value(fieldId, value) {
+    const box = await openSelect2(fieldId);
+    if (!box) {
+      console.warn("[Autofill] Combo select2 introuvable :", fieldId);
+      return false;
+    }
+    const input = searchField(fieldId);
+    if (!input) {
+      console.warn("[Autofill] Champ de recherche introuvable pour :", fieldId);
+      return false;
+    }
+    nativeSetValue(input, value);
+    await sleep(700);
+    const options = await waitForResults();
+    if (options.length === 0) {
+      console.warn("[Autofill] Aucun resultat pour :", value);
+      return false;
+    }
+    const ranked = options.map((option) => ({ option, score: scoreOption2(option, value) })).sort((a, b) => b.score - a.score);
+    const best = ranked[0];
+    if (!best || best.score <= 0) {
+      console.warn("[Autofill] Aucune option ne matche :", value);
+      return false;
+    }
+    await clickElement(best.option);
+    await sleep(300);
+    dispatchAll(box);
+    console.log("[Autofill] Combo ->", value, ":", norm(best.option.textContent).slice(0, 80));
+    return true;
+  }
+  async function setSelect2ByLabel(synonyms, value, container = document) {
+    if (value === void 0) return true;
+    const fieldId = findLabel(synonyms, container)?.getAttribute("for");
+    if (!fieldId) {
+      console.warn("[Autofill] Combo select2 introuvable :", synonyms[0]);
+      return false;
+    }
+    return setSelect2Value(fieldId, value);
+  }
+  async function addSelect2Values(synonyms, values, container = document) {
+    if (!values?.length) return 0;
+    const fieldId = findLabel(synonyms, container)?.getAttribute("for");
+    if (!fieldId) {
+      console.warn("[Autofill] Combo select2 multi introuvable :", synonyms[0]);
+      return 0;
+    }
+    let count = 0;
+    for (const value of values) {
+      const ok = await setSelect2Value(fieldId, value);
+      if (ok) count++;
+      await sleep(350);
+    }
+    return count;
+  }
+
+  // src/forms/talentsoft/fill/fillProfile.ts
+  async function fillPersonalInfo(profile) {
+    const section = findSection2(SECTION_LABELS2.personal) ?? document;
+    await setRadioGroupByLabel(FIELD_LABELS2.gender, profile.gender, section);
+    await setTextField2(FIELD_LABELS2.firstName, profile.firstName, section);
+    await setTextField2(FIELD_LABELS2.lastName, profile.lastName, section);
+    await setTextField2(FIELD_LABELS2.email, profile.email, section);
+    await sleep(200);
+    await setSelect2ByLabel(FIELD_LABELS2.addressCountry, profile.country, section);
+  }
+  async function fillDisability(profile) {
+    if (profile.hasDisability === void 0) return;
+    const section = findSection2(SECTION_LABELS2.files) ?? document;
+    await setNativeSelectByLabel(FIELD_LABELS2.disability, profile.hasDisability ? "Oui" : "Non", section);
+  }
+  async function fillExperienceSummary(profile) {
+    const section = findSection2(SECTION_LABELS2.professionalBackground) ?? document;
+    await setNativeSelectByLabel(FIELD_LABELS2.yearsOfExperience, profile.yearsOfExperience, section);
+    await sleep(200);
+    if (!profile.hasInternationalExperience) return;
+    await setSelect2ByLabel(FIELD_LABELS2.internationalExperience, "Oui", section);
+    await sleep(500);
+    await addSelect2Values(
+      FIELD_LABELS2.internationalExperienceCountries,
+      profile.internationalExperienceCountries,
+      section
+    );
+  }
+  async function fillProfile2(profile) {
+    await fillPersonalInfo(profile);
+    await sleep(300);
+    await fillDisability(profile);
+    await sleep(300);
+    await fillExperienceSummary(profile);
+  }
+
+  // src/forms/talentsoft/utils/dataset.ts
+  function rowsForField(fieldId) {
+    const nodes = document.querySelectorAll(
+      `[id^="datasetField__row--${fieldId}_"], [id^="multipleDatasetEntry_${fieldId}_"]`
+    );
+    const rows = [];
+    for (const el of nodes) {
+      const match = el.id.match(/_(\d+)$/);
+      if (!match) continue;
+      rows.push({ el, index: Number(match[1]) });
+    }
+    return rows.sort((a, b) => a.index - b.index);
+  }
+  async function clickAddAndWaitForNewRow(fieldId, previousIds) {
+    const link = document.getElementById(`addRowFor_${fieldId}`);
+    if (!link) {
+      console.warn('[Autofill] Lien "ajouter" introuvable pour :', fieldId);
+      return null;
+    }
+    await clickElement(link);
+    const timeoutMs = 5e3;
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const fresh = rowsForField(fieldId).find((row) => !previousIds.has(row.el.id));
+      if (fresh) return fresh.el;
+      await sleep(150);
+    }
+    console.warn('[Autofill] Nouvelle ligne non detectee apres clic sur "ajouter" :', fieldId);
+    return null;
+  }
+  async function ensureDatasetRows(fieldId, count) {
+    let rows = rowsForField(fieldId);
+    while (rows.length < count) {
+      const previousIds = new Set(rows.map((row) => row.el.id));
+      const newRow = await clickAddAndWaitForNewRow(fieldId, previousIds);
+      if (!newRow) break;
+      await sleep(250);
+      rows = rowsForField(fieldId);
+    }
+    return rows.map((row) => row.el);
+  }
+
+  // src/forms/talentsoft/fill/fillExperience.ts
+  async function fillExperienceRow(entry, row) {
+    await setTextField2(FIELD_LABELS2.employer, entry.employer, row);
+    await setTextField2(FIELD_LABELS2.jobTitle, entry.jobTitle, row);
+    await setDateField(FIELD_LABELS2.dateFrom, entry.dateFrom, row);
+    await setDateField(FIELD_LABELS2.dateTo, entry.dateTo, row);
+    await setTextField2(FIELD_LABELS2.responsibilities, entry.responsibilities, row);
+  }
+  async function fillExperiences2(entries) {
+    if (!entries?.length) return 0;
+    const fieldId = findDatasetFieldId(FIELD_LABELS2.experienceDataset);
+    if (!fieldId) return 0;
+    const rows = await ensureDatasetRows(fieldId, entries.length);
+    const count = Math.min(entries.length, rows.length);
+    if (entries.length > rows.length) {
+      console.warn(
+        `[Autofill] ${entries.length} experiences fournies mais seulement ${rows.length} lignes disponibles.`
+      );
+    }
+    for (let i = 0; i < count; i++) {
+      await fillExperienceRow(entries[i], rows[i]);
+      await sleep(300);
+    }
+    return count;
+  }
+
+  // src/forms/talentsoft/fill/fillEducation.ts
+  async function fillEducationRow(entry, row) {
+    await setTextField2(FIELD_LABELS2.schoolName, entry.schoolName, row);
+    await setDateField(FIELD_LABELS2.graduationDate, entry.graduationDate, row);
+    await setTextField2(FIELD_LABELS2.fieldOfStudy, entry.fieldOfStudy, row);
+    await setNativeSelectByLabel(FIELD_LABELS2.educationLevel, entry.level, row);
+    await setTextField2(FIELD_LABELS2.averageGrade, entry.averageGrade, row);
+  }
+  async function fillEducations2(entries) {
+    if (!entries?.length) return 0;
+    const fieldId = findDatasetFieldId(SECTION_LABELS2.academicBackground);
+    if (!fieldId) return 0;
+    const rows = await ensureDatasetRows(fieldId, entries.length);
+    const count = Math.min(entries.length, rows.length);
+    if (entries.length > rows.length) {
+      console.warn(
+        `[Autofill] ${entries.length} formations fournies mais seulement ${rows.length} lignes disponibles.`
+      );
+    }
+    for (let i = 0; i < count; i++) {
+      await fillEducationRow(entries[i], rows[i]);
+      await sleep(300);
+    }
+    return count;
+  }
+
+  // src/forms/talentsoft/fill/fillSkills.ts
+  async function fillSkillRow(entry, row) {
+    const nameSelect = row.querySelector("select.select2-hidden-accessible");
+    if (nameSelect) {
+      await setSelect2Value(nameSelect.id, entry.name);
+    } else {
+      console.warn("[Autofill] Combo competence introuvable dans la ligne.");
+    }
+    await sleep(200);
+    if (entry.level === void 0) return;
+    const levelSelect = [...row.querySelectorAll("select")].find(
+      (select) => select !== nameSelect
+    );
+    if (levelSelect) setNativeSelectValue(levelSelect, entry.level);
+  }
+  async function fillSkills(entries) {
+    if (!entries?.length) return 0;
+    const fieldId = findDatasetFieldId(FIELD_LABELS2.skillsDataset);
+    if (!fieldId) return 0;
+    const rows = await ensureDatasetRows(fieldId, entries.length);
+    const count = Math.min(entries.length, rows.length);
+    if (entries.length > rows.length) {
+      console.warn(
+        `[Autofill] ${entries.length} competences fournies mais seulement ${rows.length} lignes disponibles.`
+      );
+    }
+    for (let i = 0; i < count; i++) {
+      await fillSkillRow(entries[i], rows[i]);
+      await sleep(300);
+    }
+    return count;
+  }
+
+  // src/forms/talentsoft/fill/fillLanguages.ts
+  async function fillLanguageRow(entry, row) {
+    const [languageSelect, levelSelect] = [...row.querySelectorAll("select")];
+    if (languageSelect) setNativeSelectValue(languageSelect, entry.language);
+    if (entry.level !== void 0 && levelSelect) setNativeSelectValue(levelSelect, entry.level);
+  }
+  async function fillLanguages2(entries) {
+    if (!entries?.length) return 0;
+    const fieldId = findDatasetFieldId(SECTION_LABELS2.languages);
+    if (!fieldId) return 0;
+    const rows = await ensureDatasetRows(fieldId, entries.length);
+    const count = Math.min(entries.length, rows.length);
+    if (entries.length > rows.length) {
+      console.warn(
+        `[Autofill] ${entries.length} langues fournies mais seulement ${rows.length} lignes disponibles.`
+      );
+    }
+    for (let i = 0; i < count; i++) {
+      await fillLanguageRow(entries[i], rows[i]);
+      await sleep(250);
+    }
+    return count;
+  }
+
+  // src/forms/talentsoft/utils/checkbox.ts
+  async function setCheckboxByLabel(synonyms, checked, container = document) {
+    if (checked === void 0) return true;
+    const subLabel = [...container.querySelectorAll("label.WizardSubFieldLabel[for]")].find(
+      (el) => matchesLabel2(el.textContent, synonyms)
+    );
+    let checkbox = subLabel ? document.getElementById(subLabel.getAttribute("for") ?? "") : null;
+    if (!(checkbox instanceof HTMLInputElement)) {
+      const legend = [...container.querySelectorAll("legend.WizardFieldLabel[id]")].find(
+        (el) => matchesLabel2(el.textContent, synonyms)
+      );
+      checkbox = legend?.closest("fieldset")?.querySelector('input[type="checkbox"]') ?? null;
+    }
+    if (!(checkbox instanceof HTMLInputElement)) {
+      console.warn("[Autofill] Case a cocher introuvable :", synonyms[0]);
+      return false;
+    }
+    if (checkbox.checked !== checked) {
+      await clickElement(checkbox);
+    }
+    checkbox.checked = checked;
+    dispatchAll(checkbox);
+    console.log(`[Autofill] ${synonyms[0]} ->`, checked ? "coche" : "decoche");
+    return true;
+  }
+
+  // src/forms/talentsoft/fill/fillMisc.ts
+  async function fillPreferredContactLanguage(value) {
+    if (value === void 0) return;
+    const section = findSection2(SECTION_LABELS2.contact);
+    const select = section?.querySelector(
+      "select.SelectFormField:not(.AutoCompleteField):not(.WizardFieldHidden)"
+    );
+    if (!select) {
+      console.warn('[Autofill] Combo "langue preferee pour les futurs contacts" introuvable.');
+      return;
+    }
+    const ok = setNativeSelectValue(select, value);
+    console.log("[Autofill] Langue preferee ->", ok ? value : "echec");
+  }
+  async function fillMisc2(config) {
+    await fillPreferredContactLanguage(config.preferredContactLanguage);
+    await sleep(200);
+    await setSelect2ByLabel(FIELD_LABELS2.howDidYouHear, config.howDidYouHear);
+    await sleep(500);
+    if (config.howDidYouHearOther !== void 0) {
+      await setTextField2(FIELD_LABELS2.howDidYouHearOther, config.howDidYouHearOther);
+    }
+    await sleep(200);
+    await setCheckboxByLabel(FIELD_LABELS2.acceptPrivacyPolicy, config.acceptPrivacyPolicy);
+  }
+
+  // src/forms/talentsoft/fill/fillAll.ts
+  var notify3 = createNotifier({ id: "ts-autofill-status" });
+  function emptyFileFields() {
+    const missing = [];
+    for (const input of document.querySelectorAll('input[type="file"]')) {
+      if (input.files && input.files.length > 0) continue;
+      const label = document.querySelector(`label[for="${input.id}"]`);
+      missing.push(label?.textContent?.replace("*", "").trim() || input.id);
+    }
+    return missing;
+  }
+  async function fillAll3(config) {
+    notify3("Preremplissage en cours...");
+    await fillProfile2(config.profile);
+    await sleep(400);
+    const nbExp = await fillExperiences2(config.experiences);
+    await sleep(400);
+    const nbEdu = await fillEducations2(config.educations);
+    await sleep(400);
+    const nbSkills = await fillSkills(config.skills);
+    await sleep(400);
+    const nbLang = await fillLanguages2(config.languages);
+    await sleep(400);
+    await fillMisc2(config);
+    await sleep(300);
+    const missingFiles = emptyFileFields();
+    notify3(
+      `Preremplissage termine (${nbExp} exp., ${nbEdu} formations, ${nbSkills} competences, ${nbLang} langues). ` + (missingFiles.length ? `A joindre a la main (le navigateur bloque le remplissage automatique des fichiers) : ${missingFiles.join(", ")}. ` : "") + "Verifie tout avant d'envoyer \u2014 rien n'est soumis automatiquement."
+    );
+  }
+
+  // src/forms/talentsoft/ui.ts
+  var BUTTON_ID3 = "ts-autofill-button";
+  function installTalentsoftButton(config) {
+    const install = () => installAutofillButton({
+      id: BUTTON_ID3,
+      label: config.buttonLabel ?? "Remplir candidature",
+      onClick: () => fillAll3(config)
+    });
+    install();
+    observeAndReinstallButton(install);
+    notify3("Bouton Tampermonkey pret. Clique sur \xAB Remplir candidature \xBB, puis verifie avant d'envoyer.");
+  }
+
+  // src/forms/talentsoft/index.ts
+  function init3(config) {
+    installTalentsoftButton(config);
+  }
+  var run3 = fillAll3;
   return __toCommonJS(src_exports);
 })();
+if (typeof window !== 'undefined') { window.TMAutofill = TMAutofill; }
 //# sourceMappingURL=tampermonkey-autofill.js.map

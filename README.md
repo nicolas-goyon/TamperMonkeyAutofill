@@ -9,6 +9,8 @@ A TypeScript library that pre-fills online job application forms, designed to be
 | Platform | Module | Notes |
 |---|---|---|
 | SmartRecruiters | `src/forms/smartrecruiters/` | Targets the SmartRecruiters "oneclick-ui" application flow, used by many companies (Sopra Steria, ALTEN, Devoteam, …) |
+| SAP SuccessFactors (RCM) | `src/forms/successfactors/` | Targets the "Career Opportunities > Apply" form of SuccessFactors-hosted career sites (Atos, and many others). Handles text fields, paginated dropdowns, UI5 date pickers, and repeated Employment/Education/Language blocks. Field labels are matched in EN/FR. |
+| Cegid Talentsoft | `src/forms/talentsoft/` | Targets step 1 of the Talentsoft application wizard (TotalEnergies, and many other French/European career sites). Handles text/date fields, select2 combos (including AJAX-searched country/skill pickers), and repeated Experience/Education/Skill/Language blocks that require clicking "ajouter" to add each row. |
 
 ## How it works
 

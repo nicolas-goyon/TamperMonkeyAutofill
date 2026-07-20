@@ -4,5 +4,7 @@
  * disponibles derriere un seul @require.
  */
 import * as SmartRecruiters from './forms/smartrecruiters';
+import * as SuccessFactors from './forms/successfactors';
+import * as Talentsoft from './forms/talentsoft';
 
-export { SmartRecruiters };
+export { SmartRecruiters, SuccessFactors, Talentsoft };

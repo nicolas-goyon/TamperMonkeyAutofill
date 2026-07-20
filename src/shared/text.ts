@@ -21,10 +21,15 @@ function stripDiacritics(value: string): string {
 
 /**
  * Normalise une chaine pour comparaison "floue" : minuscules, sans accents,
- * espaces compactes. Utilise partout pour matcher labels/options/questions.
+ * apostrophes/guillemets typographiques ramenes a leur forme ASCII, espaces
+ * compactes. Utilise partout pour matcher labels/options/questions. Le
+ * remplacement des apostrophes courbes est important sur les sites qui
+ * les utilisent dans leurs libelles (ex. Talentsoft) alors que les
+ * synonymes de ce depot sont ecrits avec des apostrophes droites.
  */
 export const norm = (value: unknown): string =>
   stripDiacritics(String(value ?? '').normalize('NFD'))
+    .replace(/[‘’ʼ]/g, "'")
     .replace(/\s+/g, ' ')
     .trim()
     .toLowerCase();
