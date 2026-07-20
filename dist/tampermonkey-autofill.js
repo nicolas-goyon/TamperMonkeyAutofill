@@ -853,10 +853,6 @@ var TMAutofill = (() => {
   }
 
   // src/forms/smartrecruiters/utils/date.ts
-  function getFlatpickrInstance(input) {
-    const fp = input?._flatpickr;
-    return fp && typeof fp.setDate === "function" ? fp : null;
-  }
   function parseMonthYear(value) {
     const parts = value.trim().split(/[/\-.]/).map((part) => part.trim()).filter(Boolean);
     if (parts.length < 2) return null;
@@ -865,7 +861,58 @@ var TMAutofill = (() => {
     const year = Number.parseInt(yearStr, 10);
     if (!Number.isInteger(month) || !Number.isInteger(year)) return null;
     if (month < 1 || month > 12) return null;
-    return new Date(year, month - 1, 1);
+    return { month, year };
+  }
+  async function waitForOpenCalendar(scope, attempts = 15) {
+    for (let i = 0; i < attempts; i += 1) {
+      const calendar = deepQuery(".flatpickr-calendar.open", scope) ?? deepQuery(".flatpickr-calendar.open");
+      if (calendar) return calendar;
+      await sleep(60);
+    }
+    return null;
+  }
+  async function openCalendar(nativeInput, dateField) {
+    try {
+      nativeInput.scrollIntoView({ block: "center", inline: "nearest" });
+    } catch {
+    }
+    try {
+      nativeInput.click();
+      nativeInput.focus();
+    } catch {
+    }
+    let calendar = await waitForOpenCalendar(dateField, 8);
+    if (!calendar) {
+      keyboard(nativeInput, " ");
+      calendar = await waitForOpenCalendar(dateField, 8);
+    }
+    return calendar;
+  }
+  async function setCalendarYear(calendar, year) {
+    const yearInput = deepQuery("input.cur-year", calendar);
+    if (!yearInput) return false;
+    if (Number.parseInt(yearInput.value, 10) === year) return true;
+    nativeSetValue(yearInput, String(year));
+    dispatchAll(yearInput);
+    await sleep(150);
+    return true;
+  }
+  async function clickMonthTile(scope, monthIndexZeroBased) {
+    const calendar = deepQuery(".flatpickr-calendar.open", scope) ?? deepQuery(".flatpickr-calendar.open");
+    if (!calendar) return false;
+    const tiles = deepQueryAll(".flatpickr-monthSelect-month", calendar);
+    const tile = tiles[monthIndexZeroBased];
+    if (!tile) return false;
+    await clickElement(tile);
+    await sleep(150);
+    return true;
+  }
+  async function selectMonthYearViaCalendar(nativeInput, dateField, parsed) {
+    const calendar = await openCalendar(nativeInput, dateField);
+    if (!calendar) return false;
+    await setCalendarYear(calendar, parsed.year);
+    await sleep(80);
+    return clickMonthTile(dateField, parsed.month - 1);
   }
   async function setDateScoped(root, dataTest, value) {
     if (!value) return false;
@@ -873,28 +920,20 @@ var TMAutofill = (() => {
     if (!wrapper) return false;
     const dateField = deepQuery("spl-date-field", wrapper) ?? deepQuery("spl-date-picker", wrapper) ?? wrapper;
     const nativeInput = deepQuery("input.flatpickr-input", dateField) ?? deepQuery('input[type="text"]', dateField);
-    if (nativeInput) {
-      try {
-        nativeInput.scrollIntoView({ block: "center", inline: "nearest" });
-        nativeInput.click();
-        nativeInput.focus();
-      } catch {
-      }
-      await sleep(80);
-      const fp = getFlatpickrInstance(nativeInput);
-      const parsedDate = parseMonthYear(value);
-      if (fp && parsedDate) {
-        fp.setDate(parsedDate, true);
-        await sleep(80);
-        try {
-          nativeInput.blur();
-        } catch {
-        }
+    const parsed = parseMonthYear(value);
+    if (nativeInput && parsed) {
+      const ok = await selectMonthYearViaCalendar(nativeInput, dateField, parsed);
+      if (ok) {
         dispatchAll(nativeInput);
         dispatchAll(dateField);
         dispatchAll(wrapper);
         return true;
       }
+      console.warn(
+        `[Autofill] Impossible de piloter le calendrier pour "${dataTest}" (valeur "${value}") : bascule sur la saisie texte directe.`
+      );
+    }
+    if (nativeInput) {
       nativeSetValue(nativeInput, "");
       await sleep(50);
       nativeSetValue(nativeInput, value);

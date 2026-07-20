@@ -1,21 +1,25 @@
-import { deepQuery, dispatchAll, nativeSetValue, sleep } from '../../../shared';
+import {
+  clickElement,
+  deepQuery,
+  deepQueryAll,
+  dispatchAll,
+  keyboard,
+  nativeSetValue,
+  sleep,
+} from '../../../shared';
 import { scopedDataTest } from './dataTest';
 
-/** Instance flatpickr minimale, telle qu'attachee par la lib sur l'input natif. */
-interface FlatpickrLike {
-  setDate: (date: Date | string, triggerChange?: boolean, format?: string) => void;
-}
-
-function getFlatpickrInstance(input: HTMLInputElement | null): FlatpickrLike | null {
-  const fp = (input as unknown as { _flatpickr?: FlatpickrLike } | null)?._flatpickr;
-  return fp && typeof fp.setDate === 'function' ? fp : null;
+interface ParsedMonthYear {
+  /** 1-12 */
+  month: number;
+  year: number;
 }
 
 /**
- * Parse une saisie 'MM/YYYY' (ou 'DD/MM/YYYY') en Date, jour force a 1.
+ * Parse une saisie 'MM/YYYY' (ou 'DD/MM/YYYY') en {month, year}.
  * Le picker SmartRecruiters (plugin flatpickr monthSelect) ne gere que mois+annee.
  */
-function parseMonthYear(value: string): Date | null {
+function parseMonthYear(value: string): ParsedMonthYear | null {
   const parts = value
     .trim()
     .split(/[/\-.]/)
@@ -31,20 +35,110 @@ function parseMonthYear(value: string): Date | null {
   if (!Number.isInteger(month) || !Number.isInteger(year)) return null;
   if (month < 1 || month > 12) return null;
 
-  return new Date(year, month - 1, 1);
+  return { month, year };
+}
+
+/** Attend que le calendrier flatpickr (ouvert) soit present dans le DOM. */
+async function waitForOpenCalendar(scope: ParentNode, attempts = 15): Promise<Element | null> {
+  for (let i = 0; i < attempts; i += 1) {
+    const calendar =
+      deepQuery('.flatpickr-calendar.open', scope) ?? deepQuery('.flatpickr-calendar.open');
+    if (calendar) return calendar;
+    await sleep(60);
+  }
+  return null;
+}
+
+/** Ouvre le calendrier attache a l'input (clic + espace, au cas ou l'un des deux echoue). */
+async function openCalendar(
+  nativeInput: HTMLInputElement,
+  dateField: Element
+): Promise<Element | null> {
+  try {
+    nativeInput.scrollIntoView({ block: 'center', inline: 'nearest' });
+  } catch {
+    // no-op
+  }
+
+  try {
+    nativeInput.click();
+    nativeInput.focus();
+  } catch {
+    // no-op
+  }
+
+  let calendar = await waitForOpenCalendar(dateField, 8);
+
+  if (!calendar) {
+    // Certaines variantes n'ouvrent le picker qu'au clavier (cf. aria-description).
+    keyboard(nativeInput, ' ');
+    calendar = await waitForOpenCalendar(dateField, 8);
+  }
+
+  return calendar;
+}
+
+/** Pose l'annee courante du calendrier via son input numerique dedie. */
+async function setCalendarYear(calendar: Element, year: number): Promise<boolean> {
+  const yearInput = deepQuery('input.cur-year', calendar) as HTMLInputElement | null;
+  if (!yearInput) return false;
+
+  if (Number.parseInt(yearInput.value, 10) === year) return true;
+
+  nativeSetValue(yearInput, String(year));
+  dispatchAll(yearInput);
+  await sleep(150);
+
+  return true;
 }
 
 /**
- * Les champs date SmartRecruiters utilisent flatpickr avec le plugin
- * "monthSelect" : le champ texte n'est qu'un affichage (lecture au clavier
- * desactivee, cf. aria-description "Appuyez sur espace pour ouvrir le
- * selecteur"). Simuler une saisie clavier dans l'input ne met donc pas a jour
- * l'etat interne du picker (selectedDates) : la valeur affichee peut sembler
- * correcte un instant puis etre ecrasee/videe, ou etre ignoree a la sauvegarde.
- * On passe donc par l'API flatpickr (`_flatpickr.setDate`) attachee sur
- * l'input natif, qui est la seule facon fiable de selectionner reellement un
- * mois/annee (equivalent a cliquer la tuile du mois dans le calendrier).
+ * Clique la tuile du mois voulu. La grille "monthSelect" liste toujours les
+ * 12 mois dans l'ordre janvier -> decembre : on cible donc par index plutot
+ * que par libelle (independant de la langue de l'interface).
  */
+async function clickMonthTile(scope: ParentNode, monthIndexZeroBased: number): Promise<boolean> {
+  // Re-requete a chaud : le changement d'annee peut avoir redessine la grille.
+  const calendar =
+    deepQuery('.flatpickr-calendar.open', scope) ?? deepQuery('.flatpickr-calendar.open');
+  if (!calendar) return false;
+
+  const tiles = deepQueryAll('.flatpickr-monthSelect-month', calendar);
+  const tile = tiles[monthIndexZeroBased];
+  if (!tile) return false;
+
+  await clickElement(tile);
+  await sleep(150);
+
+  return true;
+}
+
+/**
+ * Selectionne mois+annee en pilotant reellement le calendrier flatpickr
+ * (plugin "monthSelect"), exactement comme le ferait un utilisateur :
+ * ouverture du picker, saisie de l'annee, puis clic sur la tuile du mois.
+ *
+ * Important : le champ texte de ce picker est en lecture seule cote UI (cf.
+ * aria-description "Appuyez sur espace pour ouvrir le selecteur") -- poser
+ * une valeur texte ou une Date via une eventuelle API interne ne suffit pas
+ * et peut laisser mois/jour incorrects (valeur du jour affiche non forcee,
+ * desynchronisation avec l'etat interne du composant). Cliquer la vraie tuile
+ * du mois est la seule methode fiable de bout en bout.
+ */
+async function selectMonthYearViaCalendar(
+  nativeInput: HTMLInputElement,
+  dateField: Element,
+  parsed: ParsedMonthYear
+): Promise<boolean> {
+  const calendar = await openCalendar(nativeInput, dateField);
+  if (!calendar) return false;
+
+  await setCalendarYear(calendar, parsed.year);
+  await sleep(80);
+
+  return clickMonthTile(dateField, parsed.month - 1);
+}
+
 export async function setDateScoped(
   root: ParentNode,
   dataTest: string,
@@ -61,42 +155,28 @@ export async function setDateScoped(
   const nativeInput = (deepQuery('input.flatpickr-input', dateField) ??
     deepQuery('input[type="text"]', dateField)) as HTMLInputElement | null;
 
-  if (nativeInput) {
-    try {
-      nativeInput.scrollIntoView({ block: 'center', inline: 'nearest' });
-      nativeInput.click();
-      nativeInput.focus();
-    } catch {
-      // no-op
-    }
+  const parsed = parseMonthYear(value);
 
-    await sleep(80);
+  if (nativeInput && parsed) {
+    const ok = await selectMonthYearViaCalendar(nativeInput, dateField, parsed);
 
-    const fp = getFlatpickrInstance(nativeInput);
-    const parsedDate = parseMonthYear(value);
-
-    if (fp && parsedDate) {
-      fp.setDate(parsedDate, true);
-      await sleep(80);
-
-      try {
-        nativeInput.blur();
-      } catch {
-        // no-op
-      }
-
+    if (ok) {
       dispatchAll(nativeInput);
       dispatchAll(dateField);
       dispatchAll(wrapper);
-
       return true;
     }
 
-    // Fallback si aucune instance flatpickr n'est trouvee (ex. champ different).
+    console.warn(
+      `[Autofill] Impossible de piloter le calendrier pour "${dataTest}" (valeur "${value}") : bascule sur la saisie texte directe.`
+    );
+  }
+
+  // Fallback : saisie texte directe (calendrier introuvable / champ different).
+  if (nativeInput) {
     nativeSetValue(nativeInput, '');
     await sleep(50);
     nativeSetValue(nativeInput, value);
-
     dispatchAll(nativeInput);
   }
 
