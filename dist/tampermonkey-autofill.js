@@ -798,6 +798,35 @@ var TMAutofill = (() => {
     }
   }
 
+  // src/forms/smartrecruiters/utils/addEntry.ts
+  async function ensureEditFormCount(addButtonDataTest, editFormDataTest, desiredCount) {
+    if (!desiredCount || desiredCount <= 0) return;
+    const countOpenForms = () => document.querySelectorAll(`[data-test="${editFormDataTest}"]`).length;
+    const maxAttempts = desiredCount + 10;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const currentCount = countOpenForms();
+      if (currentCount >= desiredCount) return;
+      const addButton = findByDataTest(addButtonDataTest);
+      if (!addButton) {
+        console.warn(
+          `[Autofill] Bouton "${addButtonDataTest}" introuvable, impossible d'ajouter d'autres blocs.`
+        );
+        return;
+      }
+      await clickElement(addButton);
+      await sleep(500);
+      if (countOpenForms() <= currentCount) {
+        await sleep(300);
+      }
+    }
+    const finalCount = countOpenForms();
+    if (finalCount < desiredCount) {
+      console.warn(
+        `[Autofill] Seulement ${finalCount}/${desiredCount} blocs "${editFormDataTest}" ouverts apres plusieurs clics sur "${addButtonDataTest}".`
+      );
+    }
+  }
+
   // src/forms/smartrecruiters/utils/checkbox.ts
   async function setCheckboxScoped(root, dataTest, expectedChecked) {
     const wrapper = scopedDataTest(root, dataTest);
@@ -920,6 +949,8 @@ var TMAutofill = (() => {
     return true;
   }
   async function fillVisibleEducationForms(educations, saveAfterFill) {
+    await ensureEditFormCount("add-education", "education-edit-form", educations?.length ?? 0);
+    await sleep(200);
     const forms = [...document.querySelectorAll('[data-test="education-edit-form"]')];
     let count = 0;
     for (let index = 0; index < forms.length; index += 1) {
@@ -958,6 +989,8 @@ var TMAutofill = (() => {
     return true;
   }
   async function fillVisibleExperienceForms(experiences, saveAfterFill) {
+    await ensureEditFormCount("add-experience", "experience-edit-form", experiences?.length ?? 0);
+    await sleep(200);
     const forms = [...document.querySelectorAll('[data-test="experience-edit-form"]')];
     let count = 0;
     for (let index = 0; index < forms.length; index += 1) {

@@ -1,4 +1,5 @@
 import { dispatchAll, sleep } from '../../../shared';
+import { ensureEditFormCount } from '../utils/addEntry';
 import { setScopedAutocompleteField } from '../utils/autocomplete';
 import { setCheckboxScoped } from '../utils/checkbox';
 import { setDateScoped } from '../utils/date';
@@ -47,6 +48,9 @@ export async function fillVisibleExperienceForms(
   experiences: ExperienceEntry[] | undefined,
   saveAfterFill: boolean
 ): Promise<number> {
+  await ensureEditFormCount('add-experience', 'experience-edit-form', experiences?.length ?? 0);
+  await sleep(200);
+
   const forms = [...document.querySelectorAll('[data-test="experience-edit-form"]')];
 
   let count = 0;
